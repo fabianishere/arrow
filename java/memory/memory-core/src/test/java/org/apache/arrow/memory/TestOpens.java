@@ -17,30 +17,31 @@
 
 package org.apache.arrow.memory;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.apache.arrow.memory.util.MemoryUtil;
 import org.junit.Test;
 
 public class TestOpens {
-  /** Instantiating the RootAllocator should poke MemoryUtil and fail. */
+  /** Instantiating the RootAllocator should poke MemoryUtil, but should not fail anymore on JDK16+. */
   @Test
-  public void testMemoryUtilFailsLoudly() {
-    // This test is configured by Maven to run WITHOUT add-opens. So this should fail on JDK16+
+  public void testMemoryUtilDoesNotFail() {
+    // This test is configured by Maven to run WITHOUT add-opens. Previously, this would fail on JDK16+
     // (where JEP396 means that add-opens is required to access JDK internals).
-    // The test will likely fail in your IDE if it doesn't correctly pick this up.
-    Throwable e = assertThrows(Throwable.class, () -> {
+    assertDoesNotThrow(() -> {
       BufferAllocator allocator = new RootAllocator();
       allocator.close();
     });
-    boolean found = false;
-    while (e != null) {
-      e = e.getCause();
-      if (e instanceof RuntimeException && e.getMessage().contains("Failed to initialize MemoryUtil")) {
-        found = true;
-        break;
-      }
-    }
-    assertTrue(found, "Expected exception as not thrown");
+  }
+
+  /** Creating a direct buffer via MemoryUtil does not work on JDK16+ due to illegal reflective access. */
+  @Test
+  public void testMemoryUtilDirectBufferFails() {
+    // This test is configured by Maven to run WITHOUT add-opens. Previously, this would fail on JDK16+
+    // (where JEP396 means that add-opens is required to access JDK internals).
+    assertThrows(UnsupportedOperationException.class, () -> {
+      MemoryUtil.directBuffer(0, 10);
+    });
   }
 }
