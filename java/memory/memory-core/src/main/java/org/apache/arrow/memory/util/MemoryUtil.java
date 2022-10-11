@@ -45,14 +45,20 @@ public class MemoryUtil {
   public static final long BYTE_ARRAY_BASE_OFFSET;
 
   /**
-   * The offset of the address field with the {@link java.nio.ByteBuffer} object.
+   * The offset of the address and capacity field with the {@link java.nio.ByteBuffer} object.
    */
   static final long BYTE_BUFFER_ADDRESS_OFFSET;
+  static final long BYTE_BUFFER_CAPACITY_OFFSET;
 
   /**
    * If the native byte order is little-endian.
    */
   public static final boolean LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
+
+  /**
+   * The offset of the cleaner field with the DirectByteBuffer class.
+   */
+  static final long DIRECT_BUFFER_CLEANER_OFFSET;
 
   static {
     try {
@@ -83,9 +89,24 @@ public class MemoryUtil {
       Field addressField = java.nio.Buffer.class.getDeclaredField("address");
       BYTE_BUFFER_ADDRESS_OFFSET = UNSAFE.objectFieldOffset(addressField);
 
-      Constructor<?> directBufferConstructor;
-      long address = -1;
+      Field capacityField = java.nio.Buffer.class.getDeclaredField("capacity");
+      BYTE_BUFFER_CAPACITY_OFFSET = UNSAFE.objectFieldOffset(capacityField);
+
       final ByteBuffer direct = ByteBuffer.allocateDirect(1);
+
+      // get the offsets for the fields of a direct ByteBuffer
+      final Class<?> directCls = direct.getClass();
+      long cleanerOffset;
+      try {
+        cleanerOffset = UNSAFE.objectFieldOffset(directCls.getDeclaredField("cleaner"));
+      } catch (NoSuchFieldException ignored) {
+        cleanerOffset = -1;
+      }
+      DIRECT_BUFFER_CLEANER_OFFSET = cleanerOffset;
+
+      Constructor<?> directBufferConstructor;
+      Throwable directBufferFailureReason = null;
+      long address = -1;
       try {
 
         final Object maybeDirectBufferConstructor =
@@ -96,15 +117,12 @@ public class MemoryUtil {
                   final Constructor<?> constructor =
                       direct.getClass().getDeclaredConstructor(long.class, int.class);
                   constructor.setAccessible(true);
-                  logger.debug("Constructor for direct buffer found and made accessible");
                   return constructor;
                 } catch (NoSuchMethodException | SecurityException e) {
-                  logger.debug("Cannot get constructor for direct buffer allocation", e);
                   return e;
                 } catch (RuntimeException e) {
                   // JDK 9+ can throw an inaccessible object exception here
                   if ("java.lang.reflect.InaccessibleObjectException".equals(e.getClass().getName())) {
-                    logger.debug("Cannot get constructor for direct buffer allocation", e);
                     return e;
                   }
 
@@ -119,22 +137,28 @@ public class MemoryUtil {
           try {
             ((Constructor<?>) maybeDirectBufferConstructor).newInstance(address, 1);
             directBufferConstructor = (Constructor<?>) maybeDirectBufferConstructor;
-            logger.debug("direct buffer constructor: available");
           } catch (InstantiationException | IllegalAccessException | InvocationTargetException e) {
-            logger.warn("unable to instantiate a direct buffer via constructor", e);
             directBufferConstructor = null;
+            directBufferFailureReason = e;
           }
         } else {
-          logger.debug(
-              "direct buffer constructor: unavailable",
-              (Throwable) maybeDirectBufferConstructor);
           directBufferConstructor = null;
+          directBufferFailureReason = (Throwable) maybeDirectBufferConstructor;
         }
+
+
+        if (directBufferConstructor != null || DIRECT_BUFFER_CLEANER_OFFSET != -1) {
+          logger.debug("direct buffer constructor: available");
+        } else {
+          logger.warn("direct buffer constructor: unavailable", directBufferFailureReason);
+        }
+
       } finally {
         if (address != -1) {
           UNSAFE.freeMemory(address);
         }
       }
+
       DIRECT_BUFFER_CONSTRUCTOR = directBufferConstructor;
     } catch (Throwable e) {
       // This exception will get swallowed, but it's necessary for the static analysis that ensures
@@ -174,7 +198,18 @@ public class MemoryUtil {
       } catch (Throwable cause) {
         throw new Error(cause);
       }
+    } else if (DIRECT_BUFFER_CLEANER_OFFSET != -1) {
+      ByteBuffer direct = ByteBuffer.allocateDirect(1);
+      final Unsafe unsafe = UNSAFE;
+
+      unsafe.putLong(direct, BYTE_BUFFER_ADDRESS_OFFSET, address);
+      unsafe.putInt(direct, BYTE_BUFFER_CAPACITY_OFFSET, capacity);
+      unsafe.putObject(direct, DIRECT_BUFFER_CLEANER_OFFSET, null);
+
+      direct.limit(capacity);
+      return direct;
     }
+
     throw new UnsupportedOperationException(
         "sun.misc.Unsafe or java.nio.DirectByteBuffer.<init>(long, int) not available");
   }

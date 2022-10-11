@@ -18,7 +18,6 @@
 package org.apache.arrow.memory;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.apache.arrow.memory.util.MemoryUtil;
 import org.junit.Test;
@@ -35,12 +34,12 @@ public class TestOpens {
     });
   }
 
-  /** Creating a direct buffer via MemoryUtil does not work on JDK16+ due to illegal reflective access. */
+  /** Creating a direct buffer via MemoryUtil should work via a hack. */
   @Test
-  public void testMemoryUtilDirectBufferFails() {
+  public void testMemoryUtilDirectBufferDoesNotFail() {
     // This test is configured by Maven to run WITHOUT add-opens. Previously, this would fail on JDK16+
     // (where JEP396 means that add-opens is required to access JDK internals).
-    assertThrows(UnsupportedOperationException.class, () -> {
+    assertDoesNotThrow(() -> {
       MemoryUtil.directBuffer(0, 10);
     });
   }
